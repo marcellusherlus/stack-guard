@@ -11,10 +11,20 @@ import (
 	"strings"
 	"time"
 
+	githubclient "stack-guard/pkg/github"
 	"stack-guard/pkg/input"
 )
 
 var repositoryPattern = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
+
+var fetchRepositoryTreeCount = func(ctx context.Context, token, repository string) (int, error) {
+	client := githubclient.NewClient(token)
+	snapshot, err := client.FetchRepo(ctx, repository, nil)
+	if err != nil {
+		return 0, err
+	}
+	return len(snapshot.Tree), nil
+}
 
 type cliConfig struct {
 	repository     string
@@ -45,9 +55,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	contextWithTimeout, cancel := context.WithTimeout(context.Background(), config.timeout)
 	defer cancel()
-	_ = contextWithTimeout
 
-	fmt.Fprintf(stdout, "validated repository %s with allowlist %s\n", config.repository, config.allowlistPath)
+	treeEntryCount, err := fetchRepositoryTreeCount(contextWithTimeout, config.githubToken, config.repository)
+	if err != nil {
+		fmt.Fprintf(stderr, "runtime error: %v\n", err)
+		return 3
+	}
+
+	fmt.Fprintf(stdout, "validated repository %s with allowlist %s (%d tree entries fetched)\n", config.repository, config.allowlistPath, treeEntryCount)
 	return 0
 }
 

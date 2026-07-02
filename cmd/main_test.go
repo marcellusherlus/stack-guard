@@ -1,11 +1,24 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func stubFetchRepositoryTreeCount(t *testing.T, stub func() (int, error)) {
+	t.Helper()
+	original := fetchRepositoryTreeCount
+	fetchRepositoryTreeCount = func(_ context.Context, _, _ string) (int, error) {
+		return stub()
+	}
+	t.Cleanup(func() {
+		fetchRepositoryTreeCount = original
+	})
+}
 
 func TestParseConfig_Errors(t *testing.T) {
 	testCases := []struct {
@@ -37,6 +50,10 @@ func TestParseConfig_Errors(t *testing.T) {
 }
 
 func TestRun_ValidInput(t *testing.T) {
+	stubFetchRepositoryTreeCount(t, func() (int, error) {
+		return 12, nil
+	})
+
 	tempDir := t.TempDir()
 	allowlistPath := filepath.Join(tempDir, "allowlist.json")
 	content := `{"languages": ["Go"]}`
@@ -55,6 +72,9 @@ func TestRun_ValidInput(t *testing.T) {
 	if !strings.Contains(stdout.String(), "validated repository org/repo") {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "12 tree entries fetched") {
+		t.Fatalf("expected tree entry count in stdout, got %q", stdout.String())
+	}
 }
 
 func TestRun_InvalidInputExitCode(t *testing.T) {
@@ -68,5 +88,29 @@ func TestRun_InvalidInputExitCode(t *testing.T) {
 
 	if !strings.Contains(stderr.String(), "input error") {
 		t.Fatalf("expected input error output, got %q", stderr.String())
+	}
+}
+
+func TestRun_RuntimeErrorExitCode(t *testing.T) {
+	stubFetchRepositoryTreeCount(t, func() (int, error) {
+		return 0, errors.New("fetch failed")
+	})
+
+	tempDir := t.TempDir()
+	allowlistPath := filepath.Join(tempDir, "allowlist.json")
+	content := `{"languages": ["Go"]}`
+	if err := os.WriteFile(allowlistPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write allowlist: %v", err)
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+
+	exitCode := run([]string{"--allowlist", allowlistPath, "org/repo"}, &stdout, &stderr)
+	if exitCode != 3 {
+		t.Fatalf("expected exit code 3, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "runtime error: fetch failed") {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 }
