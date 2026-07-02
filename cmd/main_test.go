@@ -1,0 +1,72 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestParseConfig_Errors(t *testing.T) {
+	testCases := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "missing repository",
+			args: []string{"--allowlist", "allowlist.json"},
+		},
+		{
+			name: "missing allowlist",
+			args: []string{"org/repo"},
+		},
+		{
+			name: "invalid repository",
+			args: []string{"--allowlist", "allowlist.json", "org"},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := parseConfig(testCase.args, os.Stderr)
+			if err == nil {
+				t.Fatal("expected parseConfig to fail")
+			}
+		})
+	}
+}
+
+func TestRun_ValidInput(t *testing.T) {
+	tempDir := t.TempDir()
+	allowlistPath := filepath.Join(tempDir, "allowlist.json")
+	content := `{"languages": ["Go"]}`
+	if err := os.WriteFile(allowlistPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write allowlist: %v", err)
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+
+	exitCode := run([]string{"--allowlist", allowlistPath, "org/repo"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%q)", exitCode, stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), "validated repository org/repo") {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
+func TestRun_InvalidInputExitCode(t *testing.T) {
+	var stdout strings.Builder
+	var stderr strings.Builder
+
+	exitCode := run([]string{"--allowlist", "missing.json", "org/repo"}, &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "input error") {
+		t.Fatalf("expected input error output, got %q", stderr.String())
+	}
+}
