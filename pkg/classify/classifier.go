@@ -11,8 +11,6 @@ import (
 	"stack-guard/pkg/types"
 )
 
-const aiFallbackNote = "AI refinement skipped; verdict from rules only."
-
 const systemPrompt = "You refine pre-detected repository technologies. Return JSON only with keys technologies and uncertainties. Never invent technologies not present in input. Prefer uncertain=true over guessing."
 
 type completer interface {
@@ -51,25 +49,22 @@ type aiTechnology struct {
 func (classifier *Classifier) Classify(ctx context.Context, detected []types.DetectedTech, allowlist types.Allowlist) ([]types.ClassifiedTech, []string, bool) {
 	if classifier.disabled || classifier.ai == nil || isNilCompleter(classifier.ai) {
 		classified := fallbackClassify(detected, allowlist)
-		return classified, []string{aiFallbackNote}, false
+		return classified, nil, false
 	}
 
 	requestPayload, err := json.Marshal(payload{Detected: detected, Allowlist: allowlist})
 	if err != nil {
-		classified := fallbackClassify(detected, allowlist)
-		return classified, []string{aiFallbackNote, fmt.Sprintf("AI fallback reason: %v", err)}, false
+		return fallbackWithReason(detected, allowlist, err)
 	}
 
 	completion, err := classifier.ai.Complete(ctx, systemPrompt, string(requestPayload))
 	if err != nil {
-		classified := fallbackClassify(detected, allowlist)
-		return classified, []string{aiFallbackNote, fmt.Sprintf("AI fallback reason: %v", err)}, false
+		return fallbackWithReason(detected, allowlist, err)
 	}
 
 	response, err := parseAIResponse(completion)
 	if err != nil {
-		classified := fallbackClassify(detected, allowlist)
-		return classified, []string{aiFallbackNote, fmt.Sprintf("AI fallback reason: %v", err)}, false
+		return fallbackWithReason(detected, allowlist, err)
 	}
 
 	classified := fallbackClassify(detected, allowlist)
@@ -115,6 +110,11 @@ func fallbackClassify(detected []types.DetectedTech, allowlist types.Allowlist) 
 		})
 	}
 	return result
+}
+
+func fallbackWithReason(detected []types.DetectedTech, allowlist types.Allowlist, reason error) ([]types.ClassifiedTech, []string, bool) {
+	classified := fallbackClassify(detected, allowlist)
+	return classified, []string{fmt.Sprintf("AI fallback reason: %v", reason)}, false
 }
 
 func allowlistSet(allowlist types.Allowlist) map[string]bool {

@@ -37,8 +37,8 @@ func TestClassifier_DisabledFallsBack(t *testing.T) {
 	if !classified[0].Uncertain {
 		t.Fatal("expected low confidence tech to be uncertain in fallback")
 	}
-	if len(uncertainties) == 0 {
-		t.Fatal("expected fallback uncertainty note")
+	if len(uncertainties) != 0 {
+		t.Fatalf("expected no fallback uncertainties when AI is intentionally disabled, got %#v", uncertainties)
 	}
 }
 
