@@ -1,0 +1,17 @@
+{
+  "languages": [
+    "Kotlin",
+    "Python",
+    "TypeScript",
+    "Javascript"
+  ],
+  "frameworks": [
+    "JUnit",
+    "Spring",
+    "Node"
+  ],
+  "tools": [
+    "Ruff",
+    "Testcontainers"
+  ]
+}
