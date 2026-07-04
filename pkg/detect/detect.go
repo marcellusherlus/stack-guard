@@ -117,8 +117,8 @@ func aggregateConfidence(existing, next float64) float64 {
 }
 
 func capConfidence(value float64) float64 {
-	if value > 0.99 {
-		return 0.99
+	if value > types.ConfidenceMax {
+		return types.ConfidenceMax
 	}
 	return math.Round(value*100) / 100
 }

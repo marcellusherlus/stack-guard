@@ -86,7 +86,7 @@ func (classifier *Classifier) Classify(ctx context.Context, detected []types.Det
 		if refined.Confidence > 0 {
 			classified[index].Confidence = clampConfidence(refined.Confidence)
 		}
-		classified[index].Uncertain = refined.Uncertain || classified[index].Confidence < 0.5
+		classified[index].Uncertain = refined.Uncertain || classified[index].Confidence < types.ConfidenceUncertainThreshold
 		classified[index].Notes = strings.TrimSpace(refined.Notes)
 	}
 
@@ -106,7 +106,7 @@ func fallbackClassify(detected []types.DetectedTech, allowlist types.Allowlist) 
 				Confidence:   confidence,
 			},
 			Allowed:   allowedSet[normalize.Canonical(detectedTech.Name)],
-			Uncertain: confidence < 0.5,
+			Uncertain: confidence < types.ConfidenceUncertainThreshold,
 		})
 	}
 	return result

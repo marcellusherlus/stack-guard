@@ -42,7 +42,7 @@ func Build(input BuildInput) types.Report {
 	hardViolations := 0
 	softFlags := 0
 	for _, technology := range notAllowed {
-		if technology.Uncertain || technology.Confidence < 0.5 {
+		if technology.Uncertain || technology.Confidence < types.ConfidenceUncertainThreshold {
 			softFlags++
 			continue
 		}
