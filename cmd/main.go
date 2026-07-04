@@ -18,24 +18,17 @@ import (
 	"stack-guard/pkg/detect"
 	githubclient "stack-guard/pkg/github"
 	"stack-guard/pkg/input"
+	"stack-guard/pkg/report"
 	"stack-guard/pkg/types"
 )
 
 var repositoryPattern = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
 
-type repositorySummary struct {
-	treeEntryCount int
-	detectedCount  int
-	usedAI         bool
-	uncertainCount int
-	uncertainties  []string
-}
-
-var fetchRepositorySummary = func(ctx context.Context, token, repository string, allowlist types.Allowlist, disableAI bool) (repositorySummary, error) {
+var fetchRepositoryReport = func(ctx context.Context, token, repository string, allowlist types.Allowlist, disableAI bool) (types.Report, error) {
 	client := githubclient.NewClient(token)
 	snapshot, err := client.FetchRepo(ctx, repository, detect.SelectFiles)
 	if err != nil {
-		return repositorySummary{}, err
+		return types.Report{}, err
 	}
 
 	detected := detect.Run(snapshot)
@@ -51,20 +44,25 @@ var fetchRepositorySummary = func(ctx context.Context, token, repository string,
 
 	classified, uncertainties, usedAI := classifier.Classify(ctx, detected, allowlist)
 
-	uncertainCount := 0
-	for _, tech := range classified {
-		if tech.Uncertain {
-			uncertainCount++
-		}
+	assumptions := []string{
+		"Detection is static; no build was executed.",
+		"Validation runs at language/framework/tool level, not individual libraries.",
+	}
+	if snapshot.Truncated {
+		assumptions = append(assumptions, "GitHub tree was truncated; detection coverage may be incomplete.")
+	} else {
+		assumptions = append(assumptions, "GitHub tree was complete.")
 	}
 
-	return repositorySummary{
-		treeEntryCount: len(snapshot.Tree),
-		detectedCount:  len(classified),
-		usedAI:         usedAI,
-		uncertainCount: uncertainCount,
-		uncertainties:  uncertainties,
-	}, nil
+	reportValue := report.Build(report.BuildInput{
+		Repository:    repository,
+		Classified:    classified,
+		UsedAI:        usedAI,
+		Assumptions:   assumptions,
+		Uncertainties: uncertainties,
+	})
+
+	return reportValue, nil
 }
 
 type cliConfig struct {
@@ -102,23 +100,33 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	contextWithTimeout, cancel := context.WithTimeout(context.Background(), config.timeout)
 	defer cancel()
 
-	summary, err := fetchRepositorySummary(contextWithTimeout, config.githubToken, config.repository, allowlist, config.disableAI)
+	reportValue, err := fetchRepositoryReport(contextWithTimeout, config.githubToken, config.repository, allowlist, config.disableAI)
 	if err != nil {
 		fmt.Fprintf(stderr, "runtime error: %v\n", err)
 		return 3
 	}
 
-	if !summary.usedAI {
-		for _, uncertainty := range summary.uncertainties {
-			if strings.TrimSpace(uncertainty) == "" {
-				continue
-			}
-			fmt.Fprintf(stderr, "note: %s\n", uncertainty)
+	if config.jsonOutputPath != "" {
+		payload, err := report.RenderJSON(reportValue)
+		if err != nil {
+			fmt.Fprintf(stderr, "runtime error: %v\n", err)
+			return 3
+		}
+		if err := os.WriteFile(config.jsonOutputPath, []byte(payload), 0o600); err != nil {
+			fmt.Fprintf(stderr, "runtime error: write json report: %v\n", err)
+			return 3
 		}
 	}
 
-	fmt.Fprintf(stdout, "validated repository %s with allowlist %s (%d tree entries fetched, %d technologies detected, %d uncertain, usedAI=%t)\n", config.repository, config.allowlistPath, summary.treeEntryCount, summary.detectedCount, summary.uncertainCount, summary.usedAI)
-	return 0
+	fmt.Fprint(stdout, report.RenderText(reportValue))
+
+	if reportValue.Verdict == types.VerdictCompliant {
+		return 0
+	}
+	if reportValue.Verdict == types.VerdictUncertain {
+		fmt.Fprintln(stderr, "warning: uncertain verdict requires manual review")
+	}
+	return 1
 }
 
 func parseConfig(args []string, stderr io.Writer) (cliConfig, error) {

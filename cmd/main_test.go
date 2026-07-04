@@ -11,18 +11,14 @@ import (
 	"stack-guard/pkg/types"
 )
 
-func stubFetchRepositoryTreeCount(t *testing.T, stub func() (int, error)) {
+func stubFetchRepositoryReport(t *testing.T, stub func() (types.Report, error)) {
 	t.Helper()
-	original := fetchRepositorySummary
-	fetchRepositorySummary = func(_ context.Context, _, _ string, _ types.Allowlist, _ bool) (repositorySummary, error) {
-		treeCount, err := stub()
-		if err != nil {
-			return repositorySummary{}, err
-		}
-		return repositorySummary{treeEntryCount: treeCount, detectedCount: 3, uncertainCount: 1, usedAI: false}, nil
+	original := fetchRepositoryReport
+	fetchRepositoryReport = func(_ context.Context, _, _ string, _ types.Allowlist, _ bool) (types.Report, error) {
+		return stub()
 	}
 	t.Cleanup(func() {
-		fetchRepositorySummary = original
+		fetchRepositoryReport = original
 	})
 }
 
@@ -56,8 +52,14 @@ func TestParseConfig_Errors(t *testing.T) {
 }
 
 func TestRun_ValidInput(t *testing.T) {
-	stubFetchRepositoryTreeCount(t, func() (int, error) {
-		return 12, nil
+	stubFetchRepositoryReport(t, func() (types.Report, error) {
+		return types.Report{
+			Repository: "org/repo",
+			Verdict:    types.VerdictCompliant,
+			Detected: []types.ClassifiedTech{
+				{DetectedTech: types.DetectedTech{Name: "Go", Category: types.CategoryLanguage, Confidence: 0.95}, Allowed: true},
+			},
+		}, nil
 	})
 
 	tempDir := t.TempDir()
@@ -75,20 +77,11 @@ func TestRun_ValidInput(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d (stderr=%q)", exitCode, stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "validated repository org/repo") {
+	if !strings.Contains(stdout.String(), "Repository: org/repo") {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "12 tree entries fetched") {
-		t.Fatalf("expected tree entry count in stdout, got %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "3 technologies detected") {
-		t.Fatalf("expected detected count in stdout, got %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "1 uncertain") {
-		t.Fatalf("expected uncertain count in stdout, got %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "usedAI=false") {
-		t.Fatalf("expected AI usage flag in stdout, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), "Verdict:") {
+		t.Fatalf("expected rendered verdict, got %q", stdout.String())
 	}
 }
 
@@ -107,8 +100,8 @@ func TestRun_InvalidInputExitCode(t *testing.T) {
 }
 
 func TestRun_RuntimeErrorExitCode(t *testing.T) {
-	stubFetchRepositoryTreeCount(t, func() (int, error) {
-		return 0, errors.New("fetch failed")
+	stubFetchRepositoryReport(t, func() (types.Report, error) {
+		return types.Report{}, errors.New("fetch failed")
 	})
 
 	tempDir := t.TempDir()
@@ -127,5 +120,26 @@ func TestRun_RuntimeErrorExitCode(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "runtime error: fetch failed") {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestRun_NonCompliantExitCode(t *testing.T) {
+	stubFetchRepositoryReport(t, func() (types.Report, error) {
+		return types.Report{Repository: "org/repo", Verdict: types.VerdictNonCompliant}, nil
+	})
+
+	tempDir := t.TempDir()
+	allowlistPath := filepath.Join(tempDir, "allowlist.json")
+	content := `{"languages": ["Go"]}`
+	if err := os.WriteFile(allowlistPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write allowlist: %v", err)
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+
+	exitCode := run([]string{"--allowlist", allowlistPath, "org/repo"}, &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
 }
