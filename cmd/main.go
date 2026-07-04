@@ -11,19 +11,26 @@ import (
 	"strings"
 	"time"
 
+	"stack-guard/pkg/detect"
 	githubclient "stack-guard/pkg/github"
 	"stack-guard/pkg/input"
 )
 
 var repositoryPattern = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
 
-var fetchRepositoryTreeCount = func(ctx context.Context, token, repository string) (int, error) {
+type repositorySummary struct {
+	treeEntryCount int
+	detectedCount  int
+}
+
+var fetchRepositorySummary = func(ctx context.Context, token, repository string) (repositorySummary, error) {
 	client := githubclient.NewClient(token)
-	snapshot, err := client.FetchRepo(ctx, repository, nil)
+	snapshot, err := client.FetchRepo(ctx, repository, detect.SelectFiles)
 	if err != nil {
-		return 0, err
+		return repositorySummary{}, err
 	}
-	return len(snapshot.Tree), nil
+	detected := detect.Run(snapshot)
+	return repositorySummary{treeEntryCount: len(snapshot.Tree), detectedCount: len(detected)}, nil
 }
 
 type cliConfig struct {
@@ -56,13 +63,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	contextWithTimeout, cancel := context.WithTimeout(context.Background(), config.timeout)
 	defer cancel()
 
-	treeEntryCount, err := fetchRepositoryTreeCount(contextWithTimeout, config.githubToken, config.repository)
+	summary, err := fetchRepositorySummary(contextWithTimeout, config.githubToken, config.repository)
 	if err != nil {
 		fmt.Fprintf(stderr, "runtime error: %v\n", err)
 		return 3
 	}
 
-	fmt.Fprintf(stdout, "validated repository %s with allowlist %s (%d tree entries fetched)\n", config.repository, config.allowlistPath, treeEntryCount)
+	fmt.Fprintf(stdout, "validated repository %s with allowlist %s (%d tree entries fetched, %d technologies detected)\n", config.repository, config.allowlistPath, summary.treeEntryCount, summary.detectedCount)
 	return 0
 }
 

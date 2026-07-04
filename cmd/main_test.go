@@ -11,12 +11,16 @@ import (
 
 func stubFetchRepositoryTreeCount(t *testing.T, stub func() (int, error)) {
 	t.Helper()
-	original := fetchRepositoryTreeCount
-	fetchRepositoryTreeCount = func(_ context.Context, _, _ string) (int, error) {
-		return stub()
+	original := fetchRepositorySummary
+	fetchRepositorySummary = func(_ context.Context, _, _ string) (repositorySummary, error) {
+		treeCount, err := stub()
+		if err != nil {
+			return repositorySummary{}, err
+		}
+		return repositorySummary{treeEntryCount: treeCount, detectedCount: 3}, nil
 	}
 	t.Cleanup(func() {
-		fetchRepositoryTreeCount = original
+		fetchRepositorySummary = original
 	})
 }
 
@@ -74,6 +78,9 @@ func TestRun_ValidInput(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "12 tree entries fetched") {
 		t.Fatalf("expected tree entry count in stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "3 technologies detected") {
+		t.Fatalf("expected detected count in stdout, got %q", stdout.String())
 	}
 }
 
