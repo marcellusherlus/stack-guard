@@ -1,56 +1,27 @@
 package claudeapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
+
+	anthropic "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-const (
-	defaultBaseURL = "https://api.anthropic.com"
-	defaultModel   = "claude-sonnet-4-6" //TODO check against haiku?
-)
+const defaultModel = "claude-sonnet-4-6"
 
 type Client struct {
-	httpClient *http.Client
-	apiKey     string
-	model      string
-	baseURL    string
-}
-
-type messageRequest struct {
-	Model     string              `json:"model"`
-	MaxTokens int                 `json:"max_tokens"`
-	System    string              `json:"system"`
-	Messages  []requestUserPrompt `json:"messages"`
-}
-
-type requestUserPrompt struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type messageResponse struct {
-	Content []responseContent `json:"content"`
-}
-
-type responseContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	apiKey  string
+	model   string
+	baseURL string
 }
 
 func NewClient(apiKey string) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 20 * time.Second},
-		apiKey:     strings.TrimSpace(apiKey),
-		model:      defaultModel,
-		baseURL:    defaultBaseURL,
+		apiKey: strings.TrimSpace(apiKey),
+		model:  defaultModel,
 	}
 }
 
@@ -63,43 +34,25 @@ func (client *Client) Complete(ctx context.Context, systemPrompt, userPayload st
 		return "", errors.New("missing anthropic api key")
 	}
 
-	requestBody, err := json.Marshal(messageRequest{
+	opts := []option.RequestOption{option.WithAPIKey(client.apiKey)}
+	if client.baseURL != "" {
+		opts = append(opts, option.WithBaseURL(client.baseURL))
+	}
+	sdkClient := anthropic.NewClient(opts...)
+
+	message, err := sdkClient.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     client.model,
 		MaxTokens: 1024,
-		System:    systemPrompt,
-		Messages:  []requestUserPrompt{{Role: "user", Content: userPayload}},
+		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
+		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(userPayload))},
 	})
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", fmt.Errorf("anthropic api: %w", err)
 	}
 
-	url := strings.TrimRight(client.baseURL, "/") + "/v1/messages"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(requestBody))
-	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
-	}
-	request.Header.Set("x-api-key", client.apiKey)
-	request.Header.Set("anthropic-version", "2023-06-01")
-	request.Header.Set("content-type", "application/json")
-
-	response, err := client.httpClient.Do(request)
-	if err != nil {
-		return "", fmt.Errorf("perform request: %w", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		return "", fmt.Errorf("anthropic api status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var decoded messageResponse
-	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
-	}
-	for _, item := range decoded.Content {
-		if item.Type == "text" {
-			return item.Text, nil
+	for _, block := range message.Content {
+		if block.Type == "text" {
+			return block.Text, nil
 		}
 	}
 	return "", errors.New("no text content in anthropic response")

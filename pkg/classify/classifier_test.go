@@ -104,6 +104,23 @@ func TestClassifier_AIFailureFallsBack(t *testing.T) {
 	}
 }
 
+func TestClassifier_ParsesJSONWithTrailingText(t *testing.T) {
+	completion := `{"technologies":[{"name":"Python","category":"language","confidence":0.99,"uncertain":false,"notes":""}],"uncertainties":[]}
+
+Note: Python is the dominant language given the large number of .py files.`
+	classifier := NewClassifier(&fakeCompleter{completion: completion}, false)
+	detected := []types.DetectedTech{{Name: "Python", Category: types.CategoryLanguage, Confidence: 0.90}}
+	allowlist := types.Allowlist{Languages: []string{"Python"}}
+
+	classified, _, usedAI := classifier.Classify(context.Background(), detected, allowlist)
+	if !usedAI {
+		t.Fatal("expected usedAI=true when JSON is followed by trailing text")
+	}
+	if len(classified) != 1 || classified[0].Confidence != 0.99 {
+		t.Fatalf("expected parsed result with confidence 0.99, got %#v", classified)
+	}
+}
+
 func TestClassifier_ParsesFencedJSONCompletion(t *testing.T) {
 	classifier := NewClassifier(&fakeCompleter{completion: "```json\n{\"technologies\":[{\"name\":\"TypeScript\",\"category\":\"language\",\"confidence\":0.91,\"uncertain\":false,\"notes\":\"from fenced json\"}],\"uncertainties\":[]}\n```"}, false)
 	detected := []types.DetectedTech{{Name: "TypeScript", Category: types.CategoryLanguage, Confidence: 0.70}}

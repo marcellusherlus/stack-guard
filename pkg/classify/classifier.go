@@ -11,7 +11,7 @@ import (
 	"stack-guard/pkg/types"
 )
 
-const systemPrompt = "You refine pre-detected repository technologies. Return JSON only with keys technologies and uncertainties. Never invent technologies not present in input. Prefer uncertain=true over guessing."
+const systemPrompt = "You are a precise JSON API. Respond with raw JSON only — no markdown, no code fences, no explanation before or after. The response must start with { and end with }. Use exactly two top-level keys: technologies (array) and uncertainties (array of strings). Never invent technologies not present in the input. Prefer uncertain=true over guessing."
 
 type completer interface {
 	Complete(ctx context.Context, systemPrompt, userPayload string) (string, error)
@@ -159,37 +159,40 @@ func clampConfidence(confidence float64) float64 {
 func parseAIResponse(completion string) (aiResponse, error) {
 	trimmed := strings.TrimSpace(completion)
 
+	// decode directly — json.Decoder stops after the first complete
+	// JSON value and tolerates trailing text that some models append.
 	var response aiResponse
-	if err := json.Unmarshal([]byte(trimmed), &response); err == nil {
+	if err := json.NewDecoder(strings.NewReader(trimmed)).Decode(&response); err == nil {
 		return response, nil
 	}
 
+	// Strip a markdown code fence (```[lang]\n ... \n```) and retry.
 	if strings.HasPrefix(trimmed, "```") {
-		fenceStart := strings.Index(trimmed, "\n")
-		if fenceStart >= 0 {
-			trimmed = strings.TrimSpace(trimmed[fenceStart+1:])
-		}
-		if fenceEnd := strings.LastIndex(trimmed, "```"); fenceEnd >= 0 {
-			trimmed = strings.TrimSpace(trimmed[:fenceEnd])
-		}
-		if err := json.Unmarshal([]byte(trimmed), &response); err == nil {
-			return response, nil
+		if newline := strings.Index(trimmed, "\n"); newline >= 0 {
+			inner := strings.TrimSpace(trimmed[newline+1:])
+			if fenceEnd := strings.LastIndex(inner, "```"); fenceEnd >= 0 {
+				inner = strings.TrimSpace(inner[:fenceEnd])
+			}
+			if err := json.NewDecoder(strings.NewReader(inner)).Decode(&response); err == nil {
+				return response, nil
+			}
 		}
 	}
 
+	// Extract the outermost {...} and decode.
 	firstBrace := strings.Index(trimmed, "{")
-	lastBrace := strings.LastIndex(trimmed, "}")
-	if firstBrace >= 0 && lastBrace > firstBrace {
-		candidate := strings.TrimSpace(trimmed[firstBrace : lastBrace+1])
-		if err := json.Unmarshal([]byte(candidate), &response); err == nil {
+	if firstBrace >= 0 {
+		if err := json.NewDecoder(strings.NewReader(trimmed[firstBrace:])).Decode(&response); err == nil {
 			return response, nil
 		}
 	}
 
-	if err := json.Unmarshal([]byte(strings.TrimSpace(completion)), &response); err != nil {
-		return aiResponse{}, err
+	// Return the original decode error for diagnostics.
+	var diagErr error
+	if err := json.NewDecoder(strings.NewReader(trimmed)).Decode(&response); err != nil {
+		diagErr = err
 	}
-	return response, nil
+	return aiResponse{}, diagErr
 }
 
 func isNilCompleter(ai completer) bool {
