@@ -39,6 +39,12 @@ type ClassifiedTech struct {
 	Notes     string `json:"notes,omitempty"`
 }
 
+// Confidence thresholds used across detection, classification, and reporting.
+const (
+	ConfidenceUncertainThreshold = 0.5  // below this a finding is treated as uncertain
+	ConfidenceMax                = 0.99 // cap to avoid implying absolute certainty
+)
+
 type Verdict string
 
 const (
