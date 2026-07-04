@@ -7,17 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"stack-guard/pkg/types"
 )
 
 func stubFetchRepositoryTreeCount(t *testing.T, stub func() (int, error)) {
 	t.Helper()
 	original := fetchRepositorySummary
-	fetchRepositorySummary = func(_ context.Context, _, _ string) (repositorySummary, error) {
+	fetchRepositorySummary = func(_ context.Context, _, _ string, _ types.Allowlist, _ bool) (repositorySummary, error) {
 		treeCount, err := stub()
 		if err != nil {
 			return repositorySummary{}, err
 		}
-		return repositorySummary{treeEntryCount: treeCount, detectedCount: 3}, nil
+		return repositorySummary{treeEntryCount: treeCount, detectedCount: 3, uncertainCount: 1, usedAI: false}, nil
 	}
 	t.Cleanup(func() {
 		fetchRepositorySummary = original
@@ -81,6 +83,12 @@ func TestRun_ValidInput(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "3 technologies detected") {
 		t.Fatalf("expected detected count in stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "1 uncertain") {
+		t.Fatalf("expected uncertain count in stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "usedAI=false") {
+		t.Fatalf("expected AI usage flag in stdout, got %q", stdout.String())
 	}
 }
 

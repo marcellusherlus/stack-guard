@@ -11,9 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
+
+	"stack-guard/pkg/classify"
+	"stack-guard/pkg/claudeapi"
 	"stack-guard/pkg/detect"
 	githubclient "stack-guard/pkg/github"
 	"stack-guard/pkg/input"
+	"stack-guard/pkg/types"
 )
 
 var repositoryPattern = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
@@ -21,16 +26,45 @@ var repositoryPattern = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
 type repositorySummary struct {
 	treeEntryCount int
 	detectedCount  int
+	usedAI         bool
+	uncertainCount int
+	uncertainties  []string
 }
 
-var fetchRepositorySummary = func(ctx context.Context, token, repository string) (repositorySummary, error) {
+var fetchRepositorySummary = func(ctx context.Context, token, repository string, allowlist types.Allowlist, disableAI bool) (repositorySummary, error) {
 	client := githubclient.NewClient(token)
 	snapshot, err := client.FetchRepo(ctx, repository, detect.SelectFiles)
 	if err != nil {
 		return repositorySummary{}, err
 	}
+
 	detected := detect.Run(snapshot)
-	return repositorySummary{treeEntryCount: len(snapshot.Tree), detectedCount: len(detected)}, nil
+
+	apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	var classifier *classify.Classifier
+
+	if apiKey == "" {
+		classifier = classify.NewClassifier(nil, disableAI)
+	} else {
+		classifier = classify.NewClassifier(claudeapi.NewClient(apiKey), disableAI)
+	}
+
+	classified, uncertainties, usedAI := classifier.Classify(ctx, detected, allowlist)
+
+	uncertainCount := 0
+	for _, tech := range classified {
+		if tech.Uncertain {
+			uncertainCount++
+		}
+	}
+
+	return repositorySummary{
+		treeEntryCount: len(snapshot.Tree),
+		detectedCount:  len(classified),
+		usedAI:         usedAI,
+		uncertainCount: uncertainCount,
+		uncertainties:  uncertainties,
+	}, nil
 }
 
 type cliConfig struct {
@@ -43,6 +77,11 @@ type cliConfig struct {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(os.Stderr, "warning: failed to load .env: %v\n", err)
+	}
+
 	exitCode := run(os.Args[1:], os.Stdout, os.Stderr)
 	os.Exit(exitCode)
 }
@@ -54,7 +93,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
-	_, _, err = input.LoadAllowlist(config.allowlistPath)
+	allowlist, _, err := input.LoadAllowlist(config.allowlistPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "input error: %v\n", err)
 		return 2
@@ -63,13 +102,22 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	contextWithTimeout, cancel := context.WithTimeout(context.Background(), config.timeout)
 	defer cancel()
 
-	summary, err := fetchRepositorySummary(contextWithTimeout, config.githubToken, config.repository)
+	summary, err := fetchRepositorySummary(contextWithTimeout, config.githubToken, config.repository, allowlist, config.disableAI)
 	if err != nil {
 		fmt.Fprintf(stderr, "runtime error: %v\n", err)
 		return 3
 	}
 
-	fmt.Fprintf(stdout, "validated repository %s with allowlist %s (%d tree entries fetched, %d technologies detected)\n", config.repository, config.allowlistPath, summary.treeEntryCount, summary.detectedCount)
+	if !summary.usedAI {
+		for _, uncertainty := range summary.uncertainties {
+			if strings.TrimSpace(uncertainty) == "" {
+				continue
+			}
+			fmt.Fprintf(stderr, "note: %s\n", uncertainty)
+		}
+	}
+
+	fmt.Fprintf(stdout, "validated repository %s with allowlist %s (%d tree entries fetched, %d technologies detected, %d uncertain, usedAI=%t)\n", config.repository, config.allowlistPath, summary.treeEntryCount, summary.detectedCount, summary.uncertainCount, summary.usedAI)
 	return 0
 }
 
