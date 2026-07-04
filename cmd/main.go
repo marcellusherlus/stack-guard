@@ -136,7 +136,6 @@ func parseConfig(args []string, stderr io.Writer) (cliConfig, error) {
 	allowlistPath := flagSet.String("allowlist", "", "path to allowlist JSON")
 	jsonOutputPath := flagSet.String("json", "", "write JSON report to this path")
 	disableAI := flagSet.Bool("no-ai", false, "disable AI refinement")
-	githubToken := flagSet.String("token", "", "github token (falls back to GITHUB_TOKEN)")
 	timeout := flagSet.Duration("timeout", 30*time.Second, "overall timeout")
 
 	if err := flagSet.Parse(args); err != nil {
@@ -162,10 +161,7 @@ func parseConfig(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, errors.New("--allowlist is required")
 	}
 
-	token := strings.TrimSpace(*githubToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
+	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 
 	return cliConfig{
 		repository:     repository,
@@ -183,6 +179,5 @@ func printUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  --allowlist <path>   path to allowlist JSON (required)")
 	fmt.Fprintln(stderr, "  --json <path>        write JSON report to this path")
 	fmt.Fprintln(stderr, "  --no-ai              disable AI refinement")
-	fmt.Fprintln(stderr, "  --token <token>      GitHub token (or use GITHUB_TOKEN)")
 	fmt.Fprintln(stderr, "  --timeout <duration> overall timeout (default 30s)")
 }
