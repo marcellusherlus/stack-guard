@@ -20,7 +20,7 @@ func TestLoadAllowlist_ValidAndCanonicalized(t *testing.T) {
 		t.Fatalf("write allowlist: %v", err)
 	}
 
-	allowlist, set, err := LoadAllowlist(allowlistPath)
+	allowlist, err := LoadAllowlist(allowlistPath)
 	if err != nil {
 		t.Fatalf("LoadAllowlist returned error: %v", err)
 	}
@@ -29,16 +29,16 @@ func TestLoadAllowlist_ValidAndCanonicalized(t *testing.T) {
 		t.Fatalf("expected 2 unique languages, got %d", len(allowlist.Languages))
 	}
 
-	if !set.Contains("TypeScript") {
-		t.Fatal("expected TypeScript to be in canonical set")
+	if allowlist.Languages[0] != "Python" || allowlist.Languages[1] != "TypeScript" {
+		t.Fatalf("expected canonicalized languages [Python TypeScript], got %v", allowlist.Languages)
 	}
 
-	if !set.Contains("python") {
-		t.Fatal("expected python alias lookup to resolve")
+	if len(allowlist.Frameworks) != 1 || allowlist.Frameworks[0] != "React" {
+		t.Fatalf("expected canonicalized frameworks [React], got %v", allowlist.Frameworks)
 	}
 
-	if set.Contains("unknown-tech") {
-		t.Fatal("did not expect unknown-tech to be in canonical set")
+	if len(allowlist.Tools) != 2 || allowlist.Tools[0] != "Ruff" || allowlist.Tools[1] != "Docker" {
+		t.Fatalf("expected canonicalized tools [Ruff Docker], got %v", allowlist.Tools)
 	}
 }
 
@@ -50,7 +50,7 @@ func TestLoadAllowlist_MissingKeysBecomeEmptySlices(t *testing.T) {
 		t.Fatalf("write allowlist: %v", err)
 	}
 
-	allowlist, _, err := LoadAllowlist(allowlistPath)
+	allowlist, err := LoadAllowlist(allowlistPath)
 	if err != nil {
 		t.Fatalf("LoadAllowlist returned error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestLoadAllowlist_MissingKeysBecomeEmptySlices(t *testing.T) {
 
 func TestLoadAllowlist_Errors(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
-		_, _, err := LoadAllowlist(filepath.Join(t.TempDir(), "missing.json"))
+		_, err := LoadAllowlist(filepath.Join(t.TempDir(), "missing.json"))
 		if err == nil {
 			t.Fatal("expected error for missing file")
 		}
@@ -75,7 +75,7 @@ func TestLoadAllowlist_Errors(t *testing.T) {
 			t.Fatalf("write allowlist: %v", err)
 		}
 
-		_, _, err := LoadAllowlist(allowlistPath)
+		_, err := LoadAllowlist(allowlistPath)
 		if err == nil {
 			t.Fatal("expected json parse error")
 		}
