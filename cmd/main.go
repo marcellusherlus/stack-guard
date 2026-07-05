@@ -91,7 +91,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
-	allowlist, _, err := input.LoadAllowlist(config.allowlistPath)
+	allowlist, err := input.LoadAllowlist(config.allowlistPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "input error: %v\n", err)
 		return 2
